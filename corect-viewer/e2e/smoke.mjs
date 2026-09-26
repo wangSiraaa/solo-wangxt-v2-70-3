@@ -5,7 +5,17 @@
  */
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+
+// 无 root 权限的环境：若存在本地解压的 Chromium 系统库则自动加入 LD_LIBRARY_PATH
+const LOCAL_LIBS = '/home/node/.local/chromium-libs';
+if (existsSync(`${LOCAL_LIBS}/usr/lib`)) {
+  const archDir = `${LOCAL_LIBS}/usr/lib/aarch64-linux-gnu:${LOCAL_LIBS}/lib/aarch64-linux-gnu`;
+  process.env.LD_LIBRARY_PATH = process.env.LD_LIBRARY_PATH
+    ? `${archDir}:${process.env.LD_LIBRARY_PATH}`
+    : archDir;
+}
 
 const PORT = 5199;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -175,6 +185,155 @@ try {
   check('刷新后测量标注保留', after.m === before.m && before.m === 1, JSON.stringify(after));
   check('刷新后 ROI 保留', after.r === before.r && before.r === 1, JSON.stringify(after));
   check('刷新后十字丝位置保留', after.ch.join() === before.ch.join(), `${before.ch} → ${after.ch}`);
+
+  console.log('E2E：双体积并排对比');
+  await page.getByRole('button', { name: '加载对比样例' }).click();
+  await page.waitForFunction(() => window.__store.getState().compareMode === true, null, {
+    timeout: 30_000,
+  });
+  const cmp0 = await page.evaluate(() => {
+    const s = window.__store.getState();
+    return {
+      dimsB: s.volumeB.header.dims,
+      spacingB: s.volumeB.header.spacing,
+      nameB: s.projectNameB,
+    };
+  });
+  check('对比体积 B 解码（128×128×100）', cmp0.dimsB.join() === '128,128,100', JSON.stringify(cmp0));
+  check('B 间距 0.5×0.5×4.0', cmp0.spacingB.join() === '0.5,0.5,4');
+  const canvasCount2 = await page.locator('.vtk-container canvas').count();
+  check('对比模式六个渲染画布', canvasCount2 === 6, `实际 ${canvasCount2}`);
+
+  // 物理同步：A (10,20,30) → 共享物理 z=60mm → B k=15（B 层厚 4mm）
+  await page.evaluate(() => window.__store.getState().setCrosshair([10, 20, 30]));
+  const sync1 = await page.evaluate(() => ({
+    b: window.__store.getState().crosshairB,
+    phys: window.__store.getState().crosshairPhys,
+  }));
+  check('不同间距按物理坐标同步（A k=30 ↔ B k=15）', sync1.b.join() === '10,20,15', JSON.stringify(sync1));
+
+  // 越界：A k=199 → z=398mm 超出 B 范围（99×4=396mm）→ B 夹取到 k=99，A 不动
+  await page.evaluate(() => window.__store.getState().setCrosshair([0, 0, 199]));
+  const oob = await page.evaluate(() => {
+    const s = window.__store.getState();
+    return { a: s.crosshair, b: s.crosshairB, clampedB: s.clampedB };
+  });
+  check('B 越界保持最近有效位置（k=99）', oob.b[2] === 99 && oob.clampedB[2] === true, JSON.stringify(oob));
+  check('A 不因 B 越界而移动（无跳动循环）', oob.a.join() === '0,0,199', oob.a.join());
+  await page.evaluate(() => window.__store.getState().setCrosshair([0, 0, 199]));
+  const oob2 = await page.evaluate(() => ({
+    a: window.__store.getState().crosshair,
+    b: window.__store.getState().crosshairB,
+  }));
+  check('重复输入状态幂等（不振荡）', oob2.a.join() === '0,0,199' && oob2.b.join() === '0,0,99', JSON.stringify(oob2));
+  const oobHint = await page.locator('.status-bar').innerText();
+  check('状态栏显式提示越界', oobHint.includes('越界'), oobHint);
+
+  // 翻转 K：端点对应 A k=0 ↔ B k=99、A k=198 ↔ B k=0
+  await page.evaluate(() =>
+    window.__store.getState().setMappingB({ offset: [0, 0, 0], flip: [false, false, true] }),
+  );
+  await page.evaluate(() => window.__store.getState().setCrosshair([0, 0, 0]));
+  const flipEp = await page.evaluate(() => window.__store.getState().crosshairB);
+  check('翻转 K 后端点对应（A k=0 ↔ B k=99）', flipEp[2] === 99, flipEp.join());
+  await page.evaluate(() => window.__store.getState().setCrosshair([0, 0, 198]));
+  const flipEp2 = await page.evaluate(() => window.__store.getState().crosshairB);
+  check('翻转 K 后另一端点（A k=198 ↔ B k=0）', flipEp2[2] === 0, flipEp2.join());
+
+  // 灰度差值：快速连续移动十字丝，最终只显示最后位置的取样
+  await page.evaluate(() =>
+    window.__store.getState().setMappingB({ offset: [0, 0, 0], flip: [false, false, false] }),
+  );
+  await page.evaluate(() => {
+    const s = window.__store.getState();
+    for (let k = 0; k <= 40; k++) s.setCrosshair([50, 50, k]);
+  });
+  await page.waitForFunction(
+    () => {
+      const s = window.__store.getState();
+      if (!s.sampleValues) return false;
+      const idxA = 50 + 128 * (50 + 128 * 40); // 最后位置 A(50,50,40)
+      const idxB = 50 + 128 * (50 + 128 * 20); // 对应 B(50,50,20)，z=80mm/4mm
+      return s.sampleValues.a === s.volume.data[idxA] && s.sampleValues.b === s.volumeB.data[idxB];
+    },
+    null,
+    { timeout: 10_000 },
+  );
+  check('快速拖动后只显示最后位置的取样值', true);
+  const diffText = await page.locator('.status-bar').innerText();
+  check('状态栏显示灰度差值 Δ', diffText.includes('Δ(A−B)'), diffText);
+
+  console.log('E2E：对比会话持久化（映射 / 身份 / 视图状态）');
+  await page.evaluate(() =>
+    window.__store.getState().setMappingB({ offset: [0, 0, 0], flip: [false, false, true] }),
+  );
+  await page.evaluate(() => window.__store.getState().setLockWindowLevel(true));
+  await page.evaluate(() => window.__store.getState().setCrosshair([10, 20, 30]));
+  await delay(600); // 等防抖写入 IndexedDB
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(
+    () => window.__store?.getState().status === 'ready' && window.__store.getState().compareMode,
+    null,
+    { timeout: 30_000 },
+  );
+  const restored = await page.evaluate(() => {
+    const s = window.__store.getState();
+    return {
+      flip: s.mappingB.flip,
+      chB: s.crosshairB,
+      stale: s.mappingStale,
+      lock: s.lockWindowLevel,
+    };
+  });
+  check('刷新后恢复对比会话（翻转映射保留）', restored.flip.join() === 'false,false,true' && !restored.stale, JSON.stringify(restored));
+  check('刷新后十字丝按映射恢复（B k=84）', restored.chB.join() === '10,20,84', restored.chB.join());
+  check('刷新后窗宽窗位联动锁保留', restored.lock === true, '');
+
+  console.log('E2E：文件内容变化 → 旧映射停用并要求重新确认');
+  await page.evaluate(async () => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('corect-viewer');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    const tx = db.transaction('projects', 'readwrite');
+    const store = tx.objectStore('projects');
+    const rec = await new Promise((res, rej) => {
+      const g = store.get('sample:synthetic-core-b');
+      g.onsuccess = () => res(g.result);
+      g.onerror = () => rej(g.error);
+    });
+    const bytes = new Uint8Array(rec.fileBuffer);
+    bytes[bytes.byteLength - 1] ^= 0xff; // 改一个体素字节 → 内容哈希变化
+    await new Promise((res, rej) => {
+      const p = store.put(rec);
+      p.onsuccess = () => res();
+      p.onerror = () => rej(p.error);
+    });
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(
+    () => window.__store?.getState().status === 'ready' && window.__store.getState().compareMode,
+    null,
+    { timeout: 30_000 },
+  );
+  const stale = await page.evaluate(() => {
+    const s = window.__store.getState();
+    return { stale: s.mappingStale, flip: s.mappingB.flip };
+  });
+  check('文件内容变化后旧映射停用（重置为恒等）', stale.stale === true && stale.flip.join() === 'false,false,false', JSON.stringify(stale));
+  await page.getByRole('button', { name: '确认当前映射' }).click();
+  const confirmed = await page.evaluate(() => window.__store.getState().mappingStale);
+  check('重新确认后映射恢复可用', confirmed === false, '');
+  await delay(300);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(
+    () => window.__store?.getState().status === 'ready' && window.__store.getState().compareMode,
+    null,
+    { timeout: 30_000 },
+  );
+  const reconfirmed = await page.evaluate(() => window.__store.getState().mappingStale);
+  check('确认后再次刷新不再停用', reconfirmed === false, '');
 
   check('无未捕获页面错误', pageErrors.length === 0, pageErrors.join(' | '));
 } finally {

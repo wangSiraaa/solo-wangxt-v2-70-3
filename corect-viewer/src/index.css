@@ -65,6 +65,19 @@ body,
   min-width: 0;
 }
 
+/* 双体积对比：左右两列，每列三个正交切面 */
+.views.compare {
+  grid-template-columns: 1fr 1fr;
+}
+
+.view-column {
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+}
+
 .empty-state {
   grid-column: 1 / -1;
   display: flex;
@@ -250,4 +263,100 @@ input[type='range'] {
 
 .status-bar.error {
   color: var(--danger);
+}
+
+/* ---- 双体积对比 ---- */
+
+.project-list li.active-b {
+  background: rgba(105, 240, 174, 0.12);
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.side-tag {
+  color: var(--accent);
+  margin-right: 2px;
+}
+
+.oob-badge {
+  color: #ffb74d;
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+.oob-text {
+  color: #ffb74d;
+}
+
+.diff-value {
+  color: #ce93d8;
+  font-weight: 600;
+}
+
+.warn-box {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid #ff9800;
+  border-radius: 4px;
+  background: rgba(255, 152, 0, 0.12);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mapping-editor {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.mapping-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.mapping-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.mapping-label {
+  color: var(--text-dim);
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.mapping-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mapping-field input[type='number'] {
+  width: 58px;
+  background: #262933;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.check-row {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  margin-top: 6px;
 }

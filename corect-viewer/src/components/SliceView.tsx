@@ -14,7 +14,7 @@ import vtkImageMapper from '@kitware/vtk.js/Rendering/Core/ImageMapper';
 import { SlicingMode } from '@kitware/vtk.js/Rendering/Core/ImageMapper/Constants';
 import vtkImageSlice from '@kitware/vtk.js/Rendering/Core/ImageSlice';
 import type { Vec3 } from '../format/corevol';
-import { useStore } from '../state/store';
+import { useStore, type Side } from '../state/store';
 import {
   VIEW_CONFIGS,
   fitHalfHeight,
@@ -28,6 +28,7 @@ import {
   type CameraModel,
   type PlaneAxis,
 } from '../geometry/viewMath';
+import type { Measurement, Roi } from '../geometry/roi';
 
 const CAMERA_DISTANCE = 1000;
 const SLICING_MODES = [SlicingMode.I, SlicingMode.J, SlicingMode.K] as const;
@@ -37,6 +38,8 @@ const COLOR_MEASURE = '#4fc3f7';
 const COLOR_ROI = '#69f0ae';
 const COLOR_ROI_ACTIVE = '#ff9800';
 const COLOR_MASK = 'rgba(255, 82, 82, 0.45)';
+
+const EMPTY_ROIS: Roi[] = [];
 
 type RenderWindowT = ReturnType<typeof vtkRenderWindow.newInstance>;
 type RendererT = ReturnType<typeof vtkRenderer.newInstance>;
@@ -56,7 +59,7 @@ interface DraftRect {
   cur: [number, number];
 }
 
-export function SliceView({ axis }: { axis: PlaneAxis }) {
+export function SliceView({ axis, side }: { axis: PlaneAxis; side: Side }) {
   const cfg = VIEW_CONFIGS[axis];
   const containerRef = useRef<HTMLDivElement>(null);
   const vtkRef = useRef<HTMLDivElement>(null);
@@ -69,18 +72,27 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
   const [hover, setHover] = useState<[number, number] | null>(null);
   const [draft, setDraft] = useState<DraftRect | null>(null);
 
-  const volume = useStore((s) => s.volume);
-  const crosshair = useStore((s) => s.crosshair);
+  const volume = useStore((s) => (side === 'A' ? s.volume : s.volumeB));
+  const crosshair = useStore((s) => (side === 'A' ? s.crosshair : s.crosshairB));
+  const clamped = useStore((s) => (side === 'A' ? s.clampedA : s.clampedB));
+  const compareMode = useStore((s) => s.compareMode);
   const tool = useStore((s) => s.tool);
-  const windowLevel = useStore((s) => s.windowLevel);
+  const windowLevel = useStore((s) => (side === 'A' ? s.windowLevel : s.windowLevelB));
   const threshold = useStore((s) => s.threshold);
   const measurements = useStore((s) => s.measurements);
-  const rois = useStore((s) => s.rois);
+  // ROI 仅属于基准侧（A）
+  const rois = useStore((s) => (side === 'A' ? s.rois : EMPTY_ROIS));
   const activeRoiId = useStore((s) => s.activeRoiId);
   const pendingMeasure = useStore((s) => s.pendingMeasure);
-  const setCrosshair = useStore((s) => s.setCrosshair);
+  const setCrosshair = useStore((s) => (side === 'A' ? s.setCrosshair : s.setCrosshairB));
   const clickMeasurePoint = useStore((s) => s.clickMeasurePoint);
   const addRoi = useStore((s) => s.addRoi);
+
+  // 本侧显示的测量（旧数据缺省视为 A）；B 侧不支持 ROI 工具（退化为浏览）
+  const sideMeasurements = measurements.filter((m) => (m.side ?? 'A') === side);
+  const effectiveTool = side === 'B' && tool === 'roi' ? 'navigate' : tool;
+  const pendingHere = pendingMeasure && pendingMeasure.side === side ? pendingMeasure.ijk : null;
+  const outOfBounds = clamped.some(Boolean);
 
   // ---- 初始化 vtk 渲染管线（每视图一次） ----
   useEffect(() => {
@@ -264,9 +276,9 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
       ctx.setLineDash([]);
     }
 
-    // 测量线段（离层的变淡）
+    // 测量线段（离层的变淡）；距离按该测量所属侧的间距快照计算
     ctx.font = '12px sans-serif';
-    for (const m of measurements) {
+    for (const m of sideMeasurements) {
       const onSlice = m.p1[axis] === slice && m.p2[axis] === slice;
       ctx.globalAlpha = onSlice ? 1 : 0.3;
       const s1 = worldToScreen(cam, ijkToWorld(m.p1, spacing, origin));
@@ -283,7 +295,7 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
         ctx.arc(p[0], p[1], 3, 0, Math.PI * 2);
         ctx.fill();
       }
-      const dist = physicalDistance(m.p1, m.p2, spacing);
+      const dist = measureDistance(m, spacing);
       const label = `${dist.toFixed(2)} mm`;
       const lx = (s1[0] + s2[0]) / 2 + 6;
       const ly = (s1[1] + s2[1]) / 2 - 6;
@@ -295,8 +307,8 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
     }
 
     // 测量待定第一点 + 橡皮筋
-    if (pendingMeasure) {
-      const s1 = worldToScreen(cam, ijkToWorld(pendingMeasure, spacing, origin));
+    if (pendingHere) {
+      const s1 = worldToScreen(cam, ijkToWorld(pendingHere, spacing, origin));
       ctx.fillStyle = COLOR_MEASURE;
       ctx.beginPath();
       ctx.arc(s1[0], s1[1], 4, 0, Math.PI * 2);
@@ -309,10 +321,10 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
         ctx.lineTo(hover[0], hover[1]);
         ctx.stroke();
         ctx.setLineDash([]);
-        if (pendingMeasure[axis] === slice) {
+        if (pendingHere[axis] === slice) {
           const world = screenToWorld(cam, hover[0], hover[1]);
           const ijk = worldToIjk(world, spacing, origin, volume.header.dims);
-          const dist = physicalDistance(pendingMeasure, ijk, spacing);
+          const dist = physicalDistance(pendingHere, ijk, spacing);
           ctx.strokeStyle = 'rgba(0,0,0,0.8)';
           ctx.lineWidth = 3;
           const label = `${dist.toFixed(2)} mm`;
@@ -336,7 +348,7 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
     ctx.beginPath();
     ctx.arc(cx, cy, 4, 0, Math.PI * 2);
     ctx.stroke();
-  }, [cam, volume, crosshair, measurements, rois, activeRoiId, threshold, pendingMeasure, hover, draft, axis, cfg]);
+  }, [cam, volume, crosshair, sideMeasurements, rois, activeRoiId, threshold, pendingHere, hover, draft, axis, cfg]);
 
   // ---- 交互 ----
   const eventPos = (e: React.PointerEvent | React.WheelEvent): [number, number] => {
@@ -354,11 +366,11 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
     if (!cam || !volume || e.button !== 0) return;
     overlayRef.current?.setPointerCapture(e.pointerId);
     const [px, py] = eventPos(e);
-    if (tool === 'navigate') {
+    if (effectiveTool === 'navigate') {
       draggingRef.current = true;
       const ijk = posToIjk(px, py);
       if (ijk) setCrosshair(ijk);
-    } else if (tool === 'roi') {
+    } else if (effectiveTool === 'roi') {
       setDraft({ start: [px, py], cur: [px, py] });
     }
   };
@@ -366,7 +378,7 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
   const onPointerMove = (e: React.PointerEvent) => {
     const [px, py] = eventPos(e);
     setHover([px, py]);
-    if (draggingRef.current && tool === 'navigate') {
+    if (draggingRef.current && effectiveTool === 'navigate') {
       const ijk = posToIjk(px, py);
       if (ijk) setCrosshair(ijk);
     }
@@ -376,10 +388,10 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
   const onPointerUp = (e: React.PointerEvent) => {
     if (!cam || !volume) return;
     const [px, py] = eventPos(e);
-    if (tool === 'measure') {
+    if (effectiveTool === 'measure') {
       const ijk = posToIjk(px, py);
-      if (ijk) clickMeasurePoint(ijk);
-    } else if (tool === 'roi' && draft) {
+      if (ijk) clickMeasurePoint(side, ijk);
+    } else if (effectiveTool === 'roi' && draft) {
       const a = posToIjk(draft.start[0], draft.start[1]);
       const b = posToIjk(px, py);
       if (a && b) {
@@ -408,15 +420,16 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const state = useStore.getState();
-      if (!state.volume) return;
+      const cur = side === 'A' ? state.crosshair : state.crosshairB;
+      const setFn = side === 'A' ? state.setCrosshair : state.setCrosshairB;
       const delta = e.deltaY > 0 ? 1 : -1;
-      const next: Vec3 = [...state.crosshair];
+      const next: Vec3 = [...cur];
       next[axis] += delta;
-      state.setCrosshair(next);
+      setFn(next);
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [axis]);
+  }, [axis, side]);
 
   return (
     <div ref={containerRef} className="slice-view">
@@ -424,15 +437,22 @@ export function SliceView({ axis }: { axis: PlaneAxis }) {
       <canvas
         ref={overlayRef}
         className="overlay"
-        style={{ cursor: tool === 'navigate' ? 'crosshair' : tool === 'measure' ? 'cell' : 'copy' }}
+        style={{ cursor: effectiveTool === 'navigate' ? 'crosshair' : effectiveTool === 'measure' ? 'cell' : 'copy' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={() => setHover(null)}
       />
       <div className="view-label">
+        {compareMode ? `${side} · ` : ''}
         {cfg.label}（{cfg.axisLabel} = {crosshair[axis]}）
+        {outOfBounds && <span className="oob-badge">越界·已夹取</span>}
       </div>
     </div>
   );
+}
+
+/** 测量距离：优先用创建时的间距快照（各自侧），旧数据回退到当前体积间距 */
+function measureDistance(m: Measurement, fallbackSpacing: Vec3): number {
+  return physicalDistance(m.p1, m.p2, m.spacing ?? fallbackSpacing);
 }

@@ -3,11 +3,12 @@ import { useStore, type Tool } from '../state/store';
 import { computeRoiStats } from '../geometry/roi';
 import { physicalDistance, VIEW_CONFIGS } from '../geometry/viewMath';
 import { dtypeLabel } from '../format/corevol';
+import { CompareSection } from './CompareSection';
 
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: 'navigate', label: '浏览', hint: '拖动定位十字丝，滚轮换层' },
   { id: 'measure', label: '测量', hint: '依次点击两点测距（可跨视图）' },
-  { id: 'roi', label: '框选 ROI', hint: '拖出矩形兴趣区' },
+  { id: 'roi', label: '框选 ROI', hint: '拖出矩形兴趣区（仅基准侧）' },
 ];
 
 export function SidePanel() {
@@ -41,23 +42,41 @@ export function SidePanel() {
         </div>
         <ul className="project-list">
           {s.projects.map((p) => (
-            <li key={p.id} className={p.id === s.projectId ? 'active' : ''}>
+            <li
+              key={p.id}
+              className={
+                p.id === s.projectId ? 'active' : p.id === s.projectIdB ? 'active-b' : ''
+              }
+            >
               <button className="link" onClick={() => void s.openProject(p.id)} title="打开工程">
                 {p.name || p.id}
               </button>
-              <button className="danger" onClick={() => void s.removeProject(p.id)} title="删除工程">
-                ×
-              </button>
+              <span className="row-actions">
+                {s.volume && p.id !== s.projectId && p.id !== s.projectIdB && (
+                  <button
+                    className="link"
+                    onClick={() => void s.openProjectB(p.id)}
+                    title="设为对比侧（B）"
+                  >
+                    B
+                  </button>
+                )}
+                <button className="danger" onClick={() => void s.removeProject(p.id)} title="删除工程">
+                  ×
+                </button>
+              </span>
             </li>
           ))}
           {s.projects.length === 0 && <li className="muted">暂无工程，请加载样例</li>}
         </ul>
       </section>
 
+      <CompareSection />
+
       {s.volume && (
         <>
           <section>
-            <h3>体数据</h3>
+            <h3>体数据{s.compareMode ? ' · A' : ''}</h3>
             <div className="kv">
               <span>维度</span>
               <span>{s.volume.header.dims.join(' × ')}</span>
@@ -88,7 +107,7 @@ export function SidePanel() {
             </div>
             {s.pendingMeasure && (
               <div className="hint">
-                已落下第一点，点击第二点完成测量。
+                已落下第一点（{s.pendingMeasure.side} 侧），点击第二点完成测量。
                 <button className="link" onClick={s.cancelPendingMeasure}>
                   取消
                 </button>
@@ -97,7 +116,7 @@ export function SidePanel() {
           </section>
 
           <section>
-            <h3>窗宽 / 窗位</h3>
+            <h3>窗宽 / 窗位{s.compareMode ? ' · A' : ''}</h3>
             <label>
               窗宽 {s.windowLevel.window.toFixed(0)}
               <input
@@ -125,6 +144,38 @@ export function SidePanel() {
               />
             </label>
           </section>
+
+          {s.compareMode && s.volumeB && (
+            <section>
+              <h3>窗宽 / 窗位 · B{s.lockWindowLevel ? '（已联动）' : ''}</h3>
+              <label>
+                窗宽 {s.windowLevelB.window.toFixed(0)}
+                <input
+                  type="range"
+                  min={1}
+                  max={Math.max(s.volumeB.max - s.volumeB.min, 1) * 1.5}
+                  step={1}
+                  value={s.windowLevelB.window}
+                  onChange={(e) =>
+                    s.setWindowLevelB({ ...s.windowLevelB, window: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                窗位 {s.windowLevelB.level.toFixed(0)}
+                <input
+                  type="range"
+                  min={s.volumeB.min}
+                  max={s.volumeB.max}
+                  step={1}
+                  value={s.windowLevelB.level}
+                  onChange={(e) =>
+                    s.setWindowLevelB({ ...s.windowLevelB, level: Number(e.target.value) })
+                  }
+                />
+              </label>
+            </section>
+          )}
 
           <section>
             <h3>ROI 阈值预览</h3>
@@ -163,17 +214,23 @@ export function SidePanel() {
           <section>
             <h3>测量（{s.measurements.length}）</h3>
             <ul className="annot-list">
-              {s.measurements.map((m) => (
-                <li key={m.id}>
-                  <span>
-                    ({m.p1.join(', ')}) → ({m.p2.join(', ')}) ={' '}
-                    <b>{physicalDistance(m.p1, m.p2, s.volume!.header.spacing).toFixed(2)} mm</b>
-                  </span>
-                  <button className="danger" onClick={() => s.deleteMeasurement(m.id)}>
-                    ×
-                  </button>
-                </li>
-              ))}
+              {s.measurements.map((m) => {
+                const side = m.side ?? 'A';
+                const fallback =
+                  side === 'B' && s.volumeB ? s.volumeB.header.spacing : s.volume!.header.spacing;
+                const dist = physicalDistance(m.p1, m.p2, m.spacing ?? fallback);
+                return (
+                  <li key={m.id}>
+                    <span>
+                      {s.compareMode && <b className="side-tag">[{side}]</b>} ({m.p1.join(', ')}) →
+                      ({m.p2.join(', ')}) = <b>{dist.toFixed(2)} mm</b>
+                    </span>
+                    <button className="danger" onClick={() => s.deleteMeasurement(m.id)}>
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
               {s.measurements.length === 0 && <li className="muted">暂无测量</li>}
             </ul>
           </section>

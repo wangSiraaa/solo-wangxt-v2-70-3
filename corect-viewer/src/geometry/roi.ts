@@ -6,6 +6,10 @@ export interface Measurement {
   id: string;
   p1: Vec3;
   p2: Vec3;
+  /** 所属侧：A=基准，B=对比（旧数据缺省视为 A） */
+  side?: 'A' | 'B';
+  /** 创建时的体素间距快照（mm）：测距始终按各自侧的间距计算 */
+  spacing?: Vec3;
   createdAt: number;
 }
 

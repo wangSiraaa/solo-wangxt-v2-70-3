@@ -102,3 +102,73 @@ const out = join(dirname(fileURLToPath(import.meta.url)), '../public/samples/syn
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, buffer);
 console.log(`已生成 ${out}（${(buffer.length / 1024 / 1024).toFixed(2)} MB）`);
+
+// ---- 对比样例 B：synthetic-core-b.corevol ----
+// 用于双体积并排比较验证：
+// - 间距不同：0.5 × 0.5 × 4.0 mm（K 方向层厚是 A 的 2 倍），IJ 物理范围与 A 相同
+// - 层理沿 K 翻转（k → NK-1-k）：开启「翻转 K」映射后与 A 的层理在物理坐标下对齐
+//   （A 层理周期 24 层 × 2mm = 48mm = B 层理周期 12 层 × 4mm）
+// - 灰度整体偏移 +20，便于观察同一物理位置的灰度差值
+const DIMS_B = [128, 128, 100];
+const SPACING_B = [0.5, 0.5, 4.0];
+const NAME_B = 'synthetic-core-b';
+const [NIB, NJB, NKB] = DIMS_B;
+const dataB = new Uint8Array(NIB * NJB * NKB);
+const idxB = (i, j, k) => i + NIB * (j + NJB * k);
+
+for (let k = 0; k < NKB; k++) {
+  // 层理：物理周期与 A 相同（48mm），但沿 K 翻转
+  const bedding = 96 + 28 * Math.sin((2 * Math.PI * (NKB - 1 - k)) / 12) + 20;
+  for (let j = 0; j < NJB; j++) {
+    for (let i = 0; i < NIB; i++) {
+      const di = i - CX;
+      const dj = j - CY;
+      const r = Math.sqrt(di * di + dj * dj);
+      if (r > RADIUS) continue;
+      let v = bedding + jitter(i, j, k);
+      // 致密夹层（物理位置与 A 大致对应：A k∈[100,110) → z∈[200,220) → B k∈[50,55)）
+      if (k >= 50 && k < 55) v += 50;
+      dataB[idxB(i, j, k)] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+  }
+}
+
+// 高密度结核（B 坐标系）
+function paintSphereB(ci, cj, ck, radius, value) {
+  for (let k = Math.floor(ck - radius); k <= Math.ceil(ck + radius); k++) {
+    for (let j = Math.floor(cj - radius); j <= Math.ceil(cj + radius); j++) {
+      for (let i = Math.floor(ci - radius); i <= Math.ceil(ci + radius); i++) {
+        if (i < 0 || j < 0 || k < 0 || i >= NIB || j >= NJB || k >= NKB) continue;
+        const d = Math.sqrt((i - ci) ** 2 + (j - cj) ** 2 + (k - ck) ** 2);
+        if (d <= radius) dataB[idxB(i, j, k)] = value;
+      }
+    }
+  }
+}
+
+paintSphereB(40, 80, 30, 6, 240);
+paintSphereB(90, 40, 70, 8, 240);
+
+const nameBytesB = Buffer.from(NAME_B, 'utf8');
+const headerSizeB = Math.ceil((78 + nameBytesB.length) / 8) * 8;
+const bufferB = Buffer.alloc(headerSizeB + dataB.byteLength);
+MAGIC.forEach((b, i) => (bufferB[i] = b));
+bufferB.writeUInt16LE(1, 8);
+bufferB.writeUInt16LE(0, 10);
+bufferB.writeUInt32LE(headerSizeB, 12);
+bufferB.writeUInt32LE(NIB, 16);
+bufferB.writeUInt32LE(NJB, 20);
+bufferB.writeUInt32LE(NKB, 24);
+bufferB.writeDoubleLE(SPACING_B[0], 28);
+bufferB.writeDoubleLE(SPACING_B[1], 36);
+bufferB.writeDoubleLE(SPACING_B[2], 44);
+bufferB.writeDoubleLE(0, 52);
+bufferB.writeDoubleLE(0, 60);
+bufferB.writeDoubleLE(0, 68);
+bufferB.writeUInt16LE(nameBytesB.length, 76);
+nameBytesB.copy(bufferB, 78);
+Buffer.from(dataB.buffer).copy(bufferB, headerSizeB);
+
+const outB = join(dirname(fileURLToPath(import.meta.url)), '../public/samples/synthetic-core-b.corevol');
+writeFileSync(outB, bufferB);
+console.log(`已生成 ${outB}（${(bufferB.length / 1024 / 1024).toFixed(2)} MB）`);
