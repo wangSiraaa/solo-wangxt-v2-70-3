@@ -1,17 +1,20 @@
 import type { Vec3, VoxelArray } from '../format/corevol';
 import { voxelIndex, type PlaneAxis } from './viewMath';
+import type { Side } from './syncMap';
 
-/** 距离测量标注：两个体素索引点 */
+/** 距离测量标注：两个体素索引点；双体积模式下归属某一侧（用该侧间距计算距离） */
 export interface Measurement {
   id: string;
+  side: Side;
   p1: Vec3;
   p2: Vec3;
   createdAt: number;
 }
 
-/** 矩形兴趣区：某切面某层上的 2D 矩形（体素索引，闭区间） */
+/** 矩形兴趣区：某切面某层上的 2D 矩形（体素索引，闭区间）；双体积模式下归属某一侧 */
 export interface Roi {
   id: string;
+  side: Side;
   /** 所在切面轴向 */
   axis: PlaneAxis;
   /** 所在层号 */

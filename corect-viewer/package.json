@@ -9,8 +9,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "sample": "node scripts/generate-sample.mjs",
-    "test:e2e": "node e2e/smoke.mjs"
+    "sample": "node scripts/generate-sample.mjs && node scripts/generate-compare-samples.mjs",
+    "test:e2e": "node e2e/smoke.mjs && node e2e/compare.mjs"
   },
   "dependencies": {
     "@kitware/vtk.js": "^37.3.0",

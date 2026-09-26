@@ -62,10 +62,10 @@ try {
   const state0 = await page.evaluate(() => {
     const s = window.__store.getState();
     return {
-      dims: s.volume.header.dims,
-      spacing: s.volume.header.spacing,
-      crosshair: s.crosshair,
-      name: s.projectName,
+      dims: s.base.volume.header.dims,
+      spacing: s.base.volume.header.spacing,
+      crosshair: s.base.crosshair,
+      name: s.base.projectName,
     };
   });
   check('Worker 解码出体数据', state0.dims.join() === '128,128,200', JSON.stringify(state0));
@@ -106,10 +106,10 @@ try {
   await kView.hover();
   await page.mouse.wheel(0, 120);
   await page.waitForFunction(
-    (k0) => window.__store.getState().crosshair[2] === k0 + 1,
+    (k0) => window.__store.getState().base.crosshair[2] === k0 + 1,
     state0.crosshair[2],
   );
-  const k1 = await page.evaluate(() => window.__store.getState().crosshair[2]);
+  const k1 = await page.evaluate(() => window.__store.getState().base.crosshair[2]);
   check('滚轮换层 K+1', k1 === state0.crosshair[2] + 1, `K=${k1}`);
   const statusText = await page.locator('.status-bar').innerText();
   check('状态栏同步显示新坐标', statusText.includes(`(${state0.crosshair[0]}, ${state0.crosshair[1]}, ${k1})`), statusText);
@@ -117,7 +117,7 @@ try {
   // 点击 K 视图中心 → I/J 应落在体数据中心附近
   const box = await kView.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  const ch = await page.evaluate(() => window.__store.getState().crosshair);
+  const ch = await page.evaluate(() => window.__store.getState().base.crosshair);
   check(
     '点击定位十字丝（中心附近）',
     Math.abs(ch[0] - 63.5) <= 2 && Math.abs(ch[1] - 63.5) <= 2,
@@ -161,7 +161,7 @@ try {
   console.log('E2E：刷新后持久化恢复');
   const before = await page.evaluate(() => {
     const s = window.__store.getState();
-    return { m: s.measurements.length, r: s.rois.length, ch: s.crosshair };
+    return { m: s.measurements.length, r: s.rois.length, ch: s.base.crosshair };
   });
   await delay(600); // 等防抖写入 IndexedDB
   await page.reload({ waitUntil: 'networkidle' });
@@ -170,7 +170,7 @@ try {
   });
   const after = await page.evaluate(() => {
     const s = window.__store.getState();
-    return { m: s.measurements.length, r: s.rois.length, ch: s.crosshair };
+    return { m: s.measurements.length, r: s.rois.length, ch: s.base.crosshair };
   });
   check('刷新后测量标注保留', after.m === before.m && before.m === 1, JSON.stringify(after));
   check('刷新后 ROI 保留', after.r === before.r && before.r === 1, JSON.stringify(after));

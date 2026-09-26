@@ -6,12 +6,15 @@ import { useStore } from './state/store';
 
 export default function App() {
   const status = useStore((s) => s.status);
-  const loadLastProject = useStore((s) => s.loadLastProject);
+  const mode = useStore((s) => s.mode);
+  const baseName = useStore((s) => s.base.projectName);
+  const compareName = useStore((s) => s.compare.projectName);
+  const restoreLastSession = useStore((s) => s.restoreLastSession);
 
-  // 启动时恢复上次打开的工程（体数据 + 标注）
+  // 启动时恢复上次会话（单体积工程 或 双体积比较会话）
   useEffect(() => {
-    void loadLastProject();
-  }, [loadLastProject]);
+    void restoreLastSession();
+  }, [restoreLastSession]);
 
   return (
     <div className="app">
@@ -20,19 +23,38 @@ export default function App() {
         <span className="muted">纯浏览器运行 · 数据不出本机</span>
       </header>
       <div className="app-body">
-        <main className="views">
-          {status === 'ready' ? (
-            <>
-              <SliceView axis={2} />
-              <SliceView axis={0} />
-              <SliceView axis={1} />
-            </>
-          ) : (
-            <div className="empty-state">
-              {status === 'loading' ? '正在解码体数据…' : '请在右侧加载样例或导入 .corevol 文件'}
+        {mode === 'compare' ? (
+          <main className="views-dual">
+            <div className="view-column">
+              <div className="column-label">基准 · {baseName}</div>
+              <SliceView axis={2} side="base" />
+              <SliceView axis={0} side="base" />
+              <SliceView axis={1} side="base" />
             </div>
-          )}
-        </main>
+            <div className="view-column">
+              <div className="column-label">
+                对比 · {compareName}
+              </div>
+              <SliceView axis={2} side="compare" />
+              <SliceView axis={0} side="compare" />
+              <SliceView axis={1} side="compare" />
+            </div>
+          </main>
+        ) : (
+          <main className="views">
+            {status === 'ready' ? (
+              <>
+                <SliceView axis={2} side="base" />
+                <SliceView axis={0} side="base" />
+                <SliceView axis={1} side="base" />
+              </>
+            ) : (
+              <div className="empty-state">
+                {status === 'loading' ? '正在解码体数据…' : '请在右侧加载样例或导入 .corevol 文件'}
+              </div>
+            )}
+          </main>
+        )}
         <SidePanel />
       </div>
       <StatusBar />
